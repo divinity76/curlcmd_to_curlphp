@@ -25,7 +25,7 @@
 					continue;
 				}
 				if(parsed_expression["command"]["value"].toString().toLowerCase()!="curl"){
-					ret+="//Warning: unknown command >>>"+php_quote(parsed_expression["command"]["value"])+"<<< ...Attempting to skip! (but this should be fixed)\n\n";continue;
+					ret+="//Warning: unknown command >>>"+quote_php(parsed_expression["command"]["value"])+"<<< ...Attempting to skip! (but this should be fixed)\n\n";continue;
 				}
 				ret +="array(";
 				var argsi=0;
@@ -34,7 +34,7 @@
 				ret+="\n";
 					var argo=parsed_expression["args"][argsi];
 					if(argo["type"]!="literal"){
-						ret+="//Warning: only literal argument type supported. detected argument type:"+php_quote(argo["type"])+" ...will pretend its a string literal and continue (this could get ugly..)\n\n";
+						ret+="//Warning: only literal argument type supported. detected argument type:"+quote_php(argo["type"])+" ...will pretend its a string literal and continue (this could get ugly..)\n\n";
 					}
 					var arg=argo["value"];
 					if(arg=="-H"){
