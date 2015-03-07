@@ -12,12 +12,40 @@
 		}
 		function quote_php(string){
 			return JSON.stringify(string);//an ok approximization? 
-			}
+		}
 		function curlcmd_to_curlphp(curlcmd){
 			//curl 'https://www.slavehack.com/workimage.php?rand=35' -H 'Accept: image/png,image/*;q=0.8,*/*;q=0.5' -H 'Accept-Encoding: gzip, deflate' -H 'Accept-Language: en-US,en;q=0.5' -H 'Connection: keep-alive' -H 'Cookie: __cfduid=dcff43c4adff4e5e0f5e9c4d6a2df39011425562874; _ga=GA1.2.222395776.1425562864; PHPSESSID=j58ha3f4dhugv7auofre6tmp14; _gat=1' -H 'Host: www.slavehack.com' -H 'Referer: https://www.slavehack.com/index2.php' -H 'User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64; rv:36.0) Gecko/20100101 Firefox/36.0'
 			var parsed_expressions=parse_parameters(curlcmd);
 			var i=0;
+			var debugComma=false;//true print the line that created commas.
+			var debugCommaFun=function ln() {
+				if(!debugComma){
+					return "";
+				}
+				var e = new Error();
+				if (!e.stack) try {
+					// IE requires the Error to actually be throw or else the Error's 'stack'
+					// property is undefined.
+					throw e;
+					} catch (e) {
+					if (!e.stack) {
+						return 0; // IE < 10, likely
+					}
+				}
+				var stack = e.stack.toString().split(/\r\n|\n/);
+				// We want our caller's frame. It's index into |stack| depends on the
+				// browser and browser version, so we need to search for the second frame:
+				var frameRE = /:(\d+):(?:\d+)[^\d]*$/;
+				do {
+					var frame = stack.shift();
+				} while (!frameRE.exec(frame) && stack.length);
+				return frameRE.exec(stack.shift())[1];
+			};
+			
 			var ret="";
+			var isHeader=false;
+			var suppresscomma=false;
+			var suppressspace=false;
 			for(;parsed_expressions.hasOwnProperty(i);++i){
 				var parsed_expression=parsed_expressions[i];
 				console.log("parsed_expression:",parsed_expression,parsed_expression["command"]);
@@ -29,57 +57,145 @@
 				}
 				ret +="array(";
 				var argsi=0;
-				var isHeader=false;
+				isHeader=false;
+				suppresscomma=false;
+				suppressspace=false;
+     			var headers=[];//should we allow duplicate headers?
 				for(;argsi<parsed_expression["args"].length;++argsi){
-				ret+="\n";
+					
 					var argo=parsed_expression["args"][argsi];
 					if(argo["type"]!="literal"){
 						ret+="//Warning: only literal argument type supported. detected argument type:"+quote_php(argo["type"])+" ...will pretend its a string literal and continue (this could get ugly..)\n\n";
 					}
 					var arg=argo["value"];
+					var argl=arg.toString().toLowerCase();
 					if(arg=="-H"){
-					if(isHeader){
-						ret+="//Warning: detected -H -H (this could be my fault, and that im detecting wrong, but it's probably your fault. you should fix this, if you can. its unsupported. maybe it will fuck shit up.)";
+						if(isHeader){
+							ret+="//Warning: detected -H -H (this could be my fault, and that im detecting wrong, but it's probably your fault. you should fix this, if you can. its unsupported. maybe it will fuck shit up.)";
+						}
+						isHeader=true;
+						continue;
+						} else {
+						isHeader=false;
+						//???
 					}
-					isHeader=true;
-					continue;
-					} else {
-					isHeader=false;
+					if(argsi!=0){
+						if(!suppresscomma){
+							ret+=","+debugCommaFun();
+						}
+						suppresscomma=false;
 					}
+					if(!suppressspace){
+						ret+="\n";
+					}
+					suppressspace=false;
 					if(argsi==0){
 						if(false===/http/i.test(arg)){
-						ret+="//Warning: expected first parameter to be a string containing http... something looks wrong.\n\n";
+							ret+="//Warning: expected first parameter to be a string containing http...\n";
 						}
 						ret+="CURLOPT_URL=>"+quote_php(arg);
 						continue;
 					}
-					ret+=",";
-					ret+="TODO: "+quote_php(arg);
+			        var accept_encoding=/^Accept-Encoding\s*\:\s*(.*)/ig.exec(arg);
+					if(accept_encoding!=null){
+						ret+="CURLOPT_ENCODING=>";
+						if(document.querySelector("#exact_accept_encoding_button").checked){
+							ret+=quote_php(accept_encoding[1]);
+							} else {
+							ret+=quote_php("");
+						}
+						continue;
+					}
+					var curlopt_reuse=/^Connection\s*\:\s*(.*)/gi.exec(arg);
+					if(curlopt_reuse!=null){
+						var tmp="CURLOPT_FORBID_REUSE=>";
+						if(curlopt_reuse[1]=="keep-alive"){
+							tmp+=quote_php(false);
+							} else if(curlopt_reuse[1]=="close"){
+							tmp+=quote_php(true);
+							} else {
+							ret+="//Warning: unknown Connection: parameter: "+quote_php(curlopt_reuse[1])+ " ...ignoring.";
+							suppresscomma=true;
+							suppressspace=true;
+							continue;
+						}
+						ret+=tmp;
+						continue;
+					}
+					var curlopt_useragent=/User-Agent\s*\:\s*(.*)/gi.exec(arg);
+					if(curlopt_useragent!=null){
+						ret+="CURLOPT_USERAGENT=>"+quote_php(curlopt_useragent[1]);
+						continue;
+					}
+					var curlopt_cookie=/^Cookie\s*\:\s*(.*)/gi.exec(arg);
+					if(curlopt_cookie!=null)
+					{
+						if(document.querySelector("#ignore_cookies_button").checked){
+							//cookies ignored.
+							suppresscomma=true;
+							suppressspace=true;
+							continue;
+						}
+						ret+="CURLOPT_COOKIE=>"+quote_php(curlopt_cookie[1]);
+						continue;
+					}
+					headers.push(arg);
+					suppresscomma=true;
+					suppressspace=true;
+					//	ret+="TODO: "+quote_php(arg);
 				}
-				
+				if(!suppresscomma){
+					ret+=","+debugCommaFun();;
+				}
+				if(!suppressspace){
+					ret+="\n";
+				}
+				if(headers.length>1){
+					var iiiii;
+					ret+="CURLOPT_HTTPHEADER=>array(\n";
+					for(iiiii=0;iiiii<headers.length;++iiiii){
+						ret+="    ";
+						ret+=quote_php(headers[iiiii]);
+						ret+=",\n";
+					}
+					ret=ret.substr(0,ret.length-2);
+					ret+="\n    )";					
+				}
 				ret+="\n);\n\n";
 			}
 			
 			return ret;
 		}
-		
-		
+		function curlphp_refresh(){
+			document.querySelector("#curlphp_text").textContent=curlcmd_to_curlphp(document.querySelector("#curlcmd_text").value.replace(/\t/gi,"\n"));
+			//for whatever reason, at least chrome is inserting tabs to the textarea to indicate "newline created automatically because the edge is reached"...
+		}
 	</script>
 </head>
 <body>
 	<textarea id="curlcmd_text" style="width:100%;">
 		curl 'https://www.example.org/trolo.php?rand=35' -H 'Accept: image/png,image/*;q=0.8,*/*;q=0.5' -H 'Accept-Encoding: gzip, deflate' -H 'Accept-Language: en-US,en;q=0.5' -H 'Connection: keep-alive' -H 'Cookie: __cfduid=dfff43c4adff4e5e0f5e9c4d6a2df39011425562874; _ga=GA1.2.222395776.1425562864; PHPSESSID=j58ha3f4dhugv7auofre2tmp14; _gat=1' -H 'Host: www.example.org' -H 'Referer: https://www.example.org/index2.php' -H 'User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64; rv:36.0) Gecko/20100101 Firefox/36.0'
-
+		
 		curl 'https://www.example2.org/trolo.php?rand=35' -H 'Accept: image/png,image/*;q=0.8,*/*;q=0.5' -H 'Accept-Encoding: gzip, deflate' -H 'Accept-Language: en-US,en;q=0.5' -H 'Connection: keep-alive' -H 'Cookie: __cfduid=dfff43c4adff4e5e0f5e9c4d6a2df39011425562874; _ga=GA1.2.222395776.1425562864; PHPSESSID=j58ha3f4dhugv7auofre2tmp14; _gat=1' -H 'Host: www.example.org' -H 'Referer: https://www.example2.org/index2.php' -H 'User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64; rv:36.0) Gecko/20100101 Firefox/36.0'
 	</textarea>
+	<input type="button" id="clear_button" style="width:100%;height:100%;" value="clear" onclick="Javascript:document.querySelector('#curlcmd_text').value='';curlphp_refresh();"/><br/>
+	<input type="checkbox" id="exact_accept_encoding_button">use exact Accept-Encoding ? (NOT RECOMMENDED)</input><br/>
+	<input type="checkbox" id="ignore_cookies_button">ignore cookies? (in many cases, you want curl to handle cookies automatically. and in many cases, you don't.)</input><br/>
 	
-	<pre id="curlphp_text"></pre>
+	<pre id="curlphp_text" style="background-color:cyan;"></pre>
 </body>
 <script type="text/javascript">
 	autosize(document.querySelectorAll("#curlcmd_text"));
-	document.querySelector("#curlcmd_text").addEventListener("input",function(ev){
-		document.querySelector("#curlphp_text").textContent=curlcmd_to_curlphp(ev.target.value);
-	})
-	document.querySelector("#curlcmd_text").dispatchEvent(new Event('input'));
+	document.querySelector("#curlcmd_text").addEventListener("input",curlphp_refresh);
+	document.querySelector("#ignore_cookies_button").addEventListener("change",curlphp_refresh);
+	document.querySelector("#exact_accept_encoding_button").addEventListener("change",function(ev)
+	{
+	    if(this.checked!=false){
+			this.checked=confirm('Are you sure you want this? If you force cURL to lie, and say it support an encoding it does not support (for instance, Chrome support \'sdch\', curl does not), and the server decide to use 1 of those encodings that curl does not support, you\'ll get problems. Only press yes if you know what you are doing.  The default is to let curl handle transfer encodings automatically, if encdoings are specified.');
+		}
+		curlphp_refresh();//todo: optimize so we only call curlphp_refresh() if the user decide to change this setting?
+	});
+	curlphp_refresh();
+	
 </script>
-</html>
+</html>	
