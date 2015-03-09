@@ -13,10 +13,14 @@
 		function quote_php(string){
 			return JSON.stringify(string);//an ok approximization? 
 		}
-		function curlcmd_to_curlphp(curlcmd){
-			//curl 'https://www.slavehack.com/workimage.php?rand=35' -H 'Accept: image/png,image/*;q=0.8,*/*;q=0.5' -H 'Accept-Encoding: gzip, deflate' -H 'Accept-Language: en-US,en;q=0.5' -H 'Connection: keep-alive' -H 'Cookie: __cfduid=dcff43c4adff4e5e0f5e9c4d6a2df39011425562874; _ga=GA1.2.222395776.1425562864; PHPSESSID=j58ha3f4dhugv7auofre6tmp14; _gat=1' -H 'Host: www.slavehack.com' -H 'Referer: https://www.slavehack.com/index2.php' -H 'User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64; rv:36.0) Gecko/20100101 Firefox/36.0'
-			var parsed_expressions=parse_parameters(curlcmd);
-			var i=0;
+		
+		function curlcmd_to_curlphp_v2(curlcmd){
+			"use strict";
+			var curl_cmd_arr=parse_parameters(curlcmd);
+			console.assert(Array.isArray(curl_cmd_arr));
+			var curl_cmd_arr_i=0;
+			var supressNewline=true;
+			var supressComma=true;
 			var debugComma=false;//true print the line that created commas.
 			var debugCommaFun=function ln() {
 				if(!debugComma){
@@ -31,118 +35,528 @@
 					if (!e.stack) {
 						return 0; // IE < 10, likely
 					}
-				}
-				var stack = e.stack.toString().split(/\r\n|\n/);
-				// We want our caller's frame. It's index into |stack| depends on the
-				// browser and browser version, so we need to search for the second frame:
-				var frameRE = /:(\d+):(?:\d+)[^\d]*$/;
-				do {
-					var frame = stack.shift();
-				} while (!frameRE.exec(frame) && stack.length);
-				return frameRE.exec(stack.shift())[1];
+				};
 			};
-			
-			var ret="";
-			var isHeader=false;
-			var suppresscomma=false;
-			var suppressspace=false;
-			for(;parsed_expressions.hasOwnProperty(i);++i){
-				var parsed_expression=parsed_expressions[i];
-				console.log("parsed_expression:",parsed_expression,parsed_expression["command"]);
-				if(parsed_expression["command"]== null || parsed_expression["command"]["value"]==null){
-					continue;
+			function parseFirstArgument(arg){
+				"use strict";
+				var ret="";
+				if(!/^http/i.test(arg)){
+					ret+="//Warning: expected first parameter to start with http\n";
 				}
-				if(parsed_expression["command"]["value"].toString().toLowerCase()!="curl"){
-					ret+="//Warning: unknown command >>>"+quote_php(parsed_expression["command"]["value"])+"<<< ...Attempting to skip! (but this should be fixed)\n\n";continue;
+				ret+="CURLOPT_URL=>"+quote_php(arg);
+				if(ret.length<1){
+					supressComma=true;
+					supressNewline=true;
 				}
-				ret +="array(";
-				var argsi=0;
-				isHeader=false;
-				suppresscomma=false;
-				suppressspace=false;
-     			var headers=[];//should we allow duplicate headers?
-				for(;argsi<parsed_expression["args"].length;++argsi){
-					
-					var argo=parsed_expression["args"][argsi];
-					if(argo["type"]!="literal"){
-						ret+="//Warning: only literal argument type supported. detected argument type:"+quote_php(argo["type"])+" ...will pretend its a string literal and continue (this could get ugly..)\n\n";
-					}
-					var arg=argo["value"];
-					var argl=arg.toString().toLowerCase();
-					if(arg=="-H"){
-						if(isHeader){
-							ret+="//Warning: detected -H -H (this could be my fault, and that im detecting wrong, but it's probably your fault. you should fix this, if you can. its unsupported. maybe it will fuck shit up.)";
-						}
-						isHeader=true;
-						continue;
+				return ret;
+			};
+			var headers=[];
+			function parseHeader(arg,header_ref){
+				"use strict";
+				var ret="";
+				console.log("parseHeader got",arg);
+				var accept_encoding=/^Accept-Encoding\s*\:\s*(.*)/ig.exec(arg);
+				if(accept_encoding!=null){
+					ret+="CURLOPT_ENCODING=>";
+					if(document.querySelector("#exact_accept_encoding_button").checked){
+						ret+=quote_php(accept_encoding[1]);
 						} else {
-						isHeader=false;
-						//???
+						ret+=quote_php("");
 					}
-					if(argsi!=0){
-						if(!suppresscomma){
-							ret+=","+debugCommaFun();
+					return ret;
+				}
+				var curlopt_reuse=/^Connection\s*\:\s*(.*)/gi.exec(arg);
+				if(curlopt_reuse!=null){
+					var tmp="CURLOPT_FORBID_REUSE=>";
+					if(curlopt_reuse[1]=="keep-alive"){
+						tmp+=quote_php(false);
+						} else if(curlopt_reuse[1]=="close"){
+						tmp+=quote_php(true);
+						} else {
+						ret+="//Warning: expected Connection: \"keep-alive\" or \"close\", found: "+quote_php(curlopt_reuse[1])+ " ...ignoring.";
+						//supressComma=true;
+						//supressNewline=true;
+						return ret;
+					}
+					ret+=tmp;
+					return ret;
+				}
+				var curlopt_useragent=/^User-Agent\s*\:\s*(.*)/gi.exec(arg);
+				if(curlopt_useragent!=null){
+					ret+="CURLOPT_USERAGENT=>"+quote_php(curlopt_useragent[1]);
+					return ret;
+				}
+				var curlopt_cookie=/^Cookie\s*\:\s*(.*)/gi.exec(arg);
+				if(curlopt_cookie!=null)
+				{
+					if(document.querySelector("#ignore_cookies_button").checked){
+						//cookies ignored.
+						supressComma=true;
+						supressNewline=true;
+						return ret;
+					}
+					ret+="CURLOPT_COOKIE=>"+quote_php(curlopt_cookie[1]);
+					return ret;
+				}
+				var CURLOPT_REFERER=/^Referer\s*\:\s*(.*)/gi.exec(arg);
+				if(CURLOPT_REFERER!=null){
+					ret+="CURLOPT_REFERER=>"+quote_php(CURLOPT_REFERER[1]);
+					return ret;
+				}
+				console.assert(ret.length==0);
+				header_ref.push(arg);
+				supressComma=true;
+				supressNewline=true;
+				return ret;
+				return "todo:"+quote_php(arg);
+			};
+			function CURLOPT_SAFE_UPLOAD(){
+				"use strict";
+				var ret="";
+				CURLOPT_SAFE_UPLOAD.firstrun=CURLOPT_SAFE_UPLOAD.firstrun==undefined?true:false;
+				if(CURLOPT_SAFE_UPLOAD.firstrun==false){
+					return "";
+				}
+				if(CURLOPT_SAFE_UPLOAD.firstrun==true){
+					ret+="CURLOPT_SAFE_UPLOAD=>true";
+//					if(!supressComma){
+						ret+=",";
+//					}
+//					if(!supressNewline){
+						ret+="\n";
+//					}
+				}
+				return ret;
+			};
+			function parseDataAscii(arg,CURLOPT_POSTFIELDS_ref){
+				"use strict";
+				console.log("parseDataAscii.arg is",arg);
+				console.assert(arg["type"]=="variableAssignment");
+				var ret="";
+				ret+=CURLOPT_SAFE_UPLOAD();
+				var fooO=arg["value"];
+				var name=arg["name"];
+				var data=fooO["value"];
+				if(fooO["type"]!="literal"){
+				var errstr="SOME ERROR ABOUT NOT USING LITERALS AND STUFF,AND I DO NOT WANT TO WRITE A RECURSIVE EVALUATOR AT THIS TIME SO USE LITERALS OR FIX IT YOURSELF OR PAY ME TO FIX IT. DO NOT DO THIS: -d os=`uname -all` ";
+				return errstr;
+					throw new Error(errstr);
+					//example ^ : -d os=`uname -all`
+					}
+					if(/^\@/.test(data)){
+						var filename=data.substr(1);
+						var php="new CURLFile("+quote_php(filename)+","+quote_php('application/octet-stream')+","+"basename("+quote_php(filename)+"))";
+						CURLOPT_POSTFIELDS_ref.push([name,php]);
+						return ret;
 						}
-						suppresscomma=false;
+				CURLOPT_POSTFIELDS_ref.push([name,quote_php(data)]);
+				return ret;
+				/*TODO:
+					-d/--data <data>
+					(HTTP) Sends the specified data in a POST request to the HTTP server, 
+					in the same way that a browser does when a user has filled in an HTML form and presses the submit button. 
+					This will cause curl to pass the data to the server using the content-type application/x-www-form-urlencoded. Compare to -F/--form.
+					-d/--data is the same as --data-ascii. To post data purely binary, you should instead use the --data-binary option. To URL-encode the value of a form field you may use --data-urlencode.
+					
+					If any of these options is used more than once on the same command line, the data pieces specified will be merged together with a separating &-symbol. 
+					Thus, using '-d name=daniel -d skill=lousy' would generate a post chunk that looks like 'name=daniel&skill=lousy'.
+					
+					If you start the data with the letter @, the rest should be a file name to read the data from, or - if you want curl to read the data from stdin.
+					The contents of the file must already be URL-encoded. 
+					Multiple files can also be specified. 
+					Posting data from a file named 'foobar' would thus be done with --data @foobar.
+					
+				*/
+				//dammit, with the current ret="string" approach, it will be difficult to add support for "If any of these options is used more than once"-case...				
+			};
+			function parseUnsupported(arg){
+				"use strict";
+				return "//Warning: Unsupported argument: "+quote_php(arg)+" (this is probably a bug, see https://github.com/divinity76/curlcmd_to_curlphp/issues/7 )";
+			}
+			function parseCompressed(arg){
+				"use strict";
+				console.assert(arg=="--compressed");
+				return "CURLOPT_ENCODING=>"+quote_php("");
+			}
+			function parseUserAgent(arg){
+				"use strict";
+				return "CURLOPT_USERAGENT=>"+quote_php(arg);
+			}
+			function checkLiteral(argo){
+				"use strict";
+				var ret="";
+				if(argo['type']!='literal'){
+					ret+="//Warning: only string \"literal\" argument types is (tested and) supported. detected argument type:"+quote_php(argo['type'])+"..(you should fix this. meanwile, will try to pretend it is a string literal..)\n";
+				}
+				return ret;
+			}
+			var ret="";
+			var curl_cmd_arr_i=0;
+			
+			for(;curl_cmd_arr_i<curl_cmd_arr.length;++curl_cmd_arr_i){
+				supressComma=true;
+				supressNewline=true;
+				ret+="array (\n";
+				var curl_cmd=curl_cmd_arr[curl_cmd_arr_i];
+				if(curl_cmd["command"]==undefined){
+					console.log("NO COMMAND ERROR:",curl_cmd);
+				}
+				if(curl_cmd["command"]["value"]!="curl"){
+					console.log("fog",curl_cmd);
+					ret+="//Warning: Expected \"curl\", found "+quote_php(curl_cmd["command"]["value"])+"..will pretend its \"curl\" (this could get ugly)\n";
+				}
+				var args_arr=curl_cmd["args"];
+				var headers=[];
+				var CURLOPT_POSTFIELDS=[];
+				console.assert(Array.isArray(args_arr));
+				var args_arr_i=0;
+				var NextArgumentIsRequired=function NextArgumentIsRequired(argumentType){
+					"use strict";
+					//warning: modifies ret directly.
+					if(argumentType==undefined){
+						argumentType="";
+						}
+						var argumentTypeString=argumentType.toString();
+					if(args_arr_i>=(args_arr.length-1)){
+						ret+="//Warning: "+quote_php(args_arr[args_arr_i]["value"])+" requires an additional argument. ";
+						if(argumentTypeString.length>0){
+							ret+="(of type "+quote_php(argumentTypeString)+") ";
+							}
+							ret+="additonal argument not found!";
+						return false;
 					}
-					if(!suppressspace){
+					if(argumentTypeString.length>0){
+						if(args_arr[args_arr_i+1]["type"]!=argumentTypeString){
+							ret+="//Warning: "+quote_php(args_arr[args_arr_i]["value"])+" requires an additional argument of type "+quote_php(argumentTypeString)+" , but detected argument of type "+quote_php(args_arr[args_arr_i+1]["type"])+ "...prepare for trouble";
+							}
+						}
+					return true;
+				};
+				NextArgumentIsRequired.OK=0;
+				NextArgumentIsRequired.ArgumentMissing=1;
+				NextArgumentIsRequired.ArgumenArgumentWrong=2;
+				
+				for(;args_arr_i<args_arr.length;++args_arr_i){
+					if(!supressComma){
+						ret+=","+debugCommaFun();
+					}
+					supressComma=false;
+					
+					if(!supressNewline){
 						ret+="\n";
 					}
-					suppressspace=false;
-					if(argsi==0){
-						if(false===/http/i.test(arg)){
-							ret+="//Warning: expected first parameter to be a string containing http...\n";
-						}
-						ret+="CURLOPT_URL=>"+quote_php(arg);
+					supressNewline=false;
+					var argo=args_arr[args_arr_i];
+					ret+=checkLiteral(argo);
+					console.log(argo);
+					var arg=argo['value'];
+					if(args_arr_i==0){
+						ret+=parseFirstArgument(arg);
 						continue;
 					}
-			        var accept_encoding=/^Accept-Encoding\s*\:\s*(.*)/ig.exec(arg);
-					if(accept_encoding!=null){
-						ret+="CURLOPT_ENCODING=>";
-						if(document.querySelector("#exact_accept_encoding_button").checked){
-							ret+=quote_php(accept_encoding[1]);
-							} else {
-							ret+=quote_php("");
-						}
-						continue;
-					}
-					var curlopt_reuse=/^Connection\s*\:\s*(.*)/gi.exec(arg);
-					if(curlopt_reuse!=null){
-						var tmp="CURLOPT_FORBID_REUSE=>";
-						if(curlopt_reuse[1]=="keep-alive"){
-							tmp+=quote_php(false);
-							} else if(curlopt_reuse[1]=="close"){
-							tmp+=quote_php(true);
-							} else {
-							ret+="//Warning: unknown Connection: parameter: "+quote_php(curlopt_reuse[1])+ " ...ignoring.";
-							suppresscomma=true;
-							suppressspace=true;
-							continue;
-						}
-						ret+=tmp;
-						continue;
-					}
-					var curlopt_useragent=/User-Agent\s*\:\s*(.*)/gi.exec(arg);
-					if(curlopt_useragent!=null){
-						ret+="CURLOPT_USERAGENT=>"+quote_php(curlopt_useragent[1]);
-						continue;
-					}
-					var curlopt_cookie=/^Cookie\s*\:\s*(.*)/gi.exec(arg);
-					if(curlopt_cookie!=null)
+					if(arg=="-a" || arg=="--append")
 					{
-						if(document.querySelector("#ignore_cookies_button").checked){
-							//cookies ignored.
-							suppresscomma=true;
-							suppressspace=true;
-							continue;
+						/*TODO: -a/--append
+							(FTP/SFTP) When used in an upload, this will tell curl to append to the target file instead of overwriting it. If the file doesn't exist, it will be created. Note that this flag is ignored by some SSH servers (including OpenSSH).
+						*/
+					}
+					if(arg=="-A" || arg=="--user-agent"){
+						if(false==NextArgumentIsRequired("literal")){
+							continue;//
 						}
-						ret+="CURLOPT_COOKIE=>"+quote_php(curlopt_cookie[1]);
+						++args_arr_i;
+						var argo2=args_arr[args_arr_i];
+						ret+=checkLiteral(argo2);
+						ret+=parseUserAgent(argo2['value']);
 						continue;
 					}
-					headers.push(arg);
-					suppresscomma=true;
-					suppressspace=true;
-					//	ret+="TODO: "+quote_php(arg);
+					
+					if(arg=="--anyauth"){/*TODO:
+						--anyauth
+						(HTTP) Tells curl to figure out authentication method by itself, and use the most secure one the remote site claims to support. This is done by first doing a request and checking the response-headers, thus possibly inducing an extra network round-trip. This is used instead of setting a specific authentication method, which you can do with --basic, --digest, --ntlm, and --negotiate.
+						Note that using --anyauth is not recommended if you do uploads from stdin, since it may require data to be sent twice and then the client must be able to rewind. If the need should arise when uploading from stdin, the upload operation will fail.
+					*/
+					}
+					if(arg=="-b" || arg=="--cookie"){
+						/*TODO:
+							-b/--cookie <name=data>
+							(HTTP) Pass the data to the HTTP server as a cookie. It is supposedly the data previously received from the server in a "Set-Cookie:" line. The data should be in the format "NAME1=VALUE1; NAME2=VALUE2".
+							If no '=' symbol is used in the line, it is treated as a filename to use to read previously stored cookie lines from, which should be used in this session if they match. Using this method also activates the "cookie parser" which will make curl record incoming cookies too, which may be handy if you're using this in combination with the -L/--location option. The file format of the file to read cookies from should be plain HTTP headers or the Netscape/Mozilla cookie file format.
+							
+							NOTE that the file specified with -b/--cookie is only used as input. No cookies will be stored in the file. To store cookies, use the -c/--cookie-jar option or you could even save the HTTP headers to a file using -D/--dump-header!
+							
+							If this option is set more than once, the last one will be the one that's used.
+						*/
+					}
+					if(arg=="-B" || arg=="--use-ascii"){
+						/*TODO:
+							-B/--use-ascii
+							Enable ASCII transfer when using FTP or LDAP. For FTP, this can also be enforced by using an URL that ends with ";type=A". This option causes data sent to stdout to be in text mode for win32 systems.
+						*/
+					}
+					if(arg=="--basic"){
+						/*TODO:
+							(HTTP) Tells curl to use HTTP Basic authentication. This is the default and this option is usually pointless, unless you use it to override a previously set option that sets a different authentication method (such as --ntlm, --digest, or --negotiate).
+						*/
+					}
+					if(arg=="--ciphers"){
+						/*TODO:
+							--ciphers <list of ciphers>
+							(SSL) Specifies which ciphers to use in the connection. The list of ciphers must specify valid ciphers. Read up on SSL cipher list details on this URL: http://www.openssl.org/docs/apps/ciphers.html
+							NSS ciphers are done differently than OpenSSL and GnuTLS. The full list of NSS ciphers is in the NSSCipherSuite entry at this URL: http://directory.fedora.redhat.com/docs/mod_nss.html#Directives
+							
+							If this option is used several times, the last one will override the others.
+						*/
+					}
+					if(arg=="--compressed"){
+						ret+=parseCompressed(arg);
+						continue;
+					}
+					if(arg=="--connect-timeout"){
+						/*TODO:
+							--connect-timeout <seconds>
+							Maximum time in seconds that you allow the connection to the server to take. This only limits the connection phase, once curl has connected this option is of no more use. See also the -m/--max-time option.
+							If this option is used several times, the last one will be used.
+						*/
+					}
+					if(arg=="-c" || arg=="--cookie-jar"){
+						/*TODO:
+							-c/--cookie-jar <file name>
+							Specify to which file you want curl to write all cookies after a completed operation. Curl writes all cookies previously read from a specified file as well as all cookies received from remote server(s). If no cookies are known, no file will be written. The file will be written using the Netscape cookie file format. If you set the file name to a single dash, "-", the cookies will be written to stdout.
+							NOTE If the cookie jar can't be created or written to, the whole curl operation won't fail or even report an error clearly. Using -v will get a warning displayed, but that is the only visible feedback you get about this possibly lethal situation.
+							
+							If this option is used several times, the last specified file name will be used.
+							
+						*/
+					}
+					//TODO: as of writing, the vast majority of curl options are unsupported.  ... see https://github.com/divinity76/curlcmd_to_curlphp/issues/7
+					//Every switch ^ is added in the same order as the documentation. Everything V is added in a (kindof) random order.
+					
+					
+					
+					
+					if(arg=="-d" || arg == "--data" || arg == "--data-ascii"){
+						/*TODO:
+							-d/--data <data>
+							(HTTP) Sends the specified data in a POST request to the HTTP server, in the same way that a browser does when a user has filled in an HTML form and presses the submit button. This will cause curl to pass the data to the server using the content-type application/x-www-form-urlencoded. Compare to -F/--form.
+							-d/--data is the same as --data-ascii. To post data purely binary, you should instead use the --data-binary option. To URL-encode the value of a form field you may use --data-urlencode.
+							
+							If any of these options is used more than once on the same command line, the data pieces specified will be merged together with a separating &-symbol. Thus, using '-d name=daniel -d skill=lousy' would generate a post chunk that looks like 'name=daniel&skill=lousy'.
+							
+							If you start the data with the letter @, the rest should be a file name to read the data from, or - if you want curl to read the data from stdin. The contents of the file must already be URL-encoded. Multiple files can also be specified. Posting data from a file named 'foobar' would thus be done with --data @foobar.
+							
+						*/
+//						console.log("arg is d!, 0",args_arr[args_arr_i],"+1",args_arr[args_arr_i+1]);
+//						if(false==NextArgumentIsRequired("variableAssignment")){
+//						console.log(args_arr[args_arr_i+1],"<<that is NOT a variableAssignment..");
+//							continue;//
+//						}
+//						console.log(args_arr[args_arr_i+1],"<<that is a variableAssignment..");
+//						++args_arr_i;
+//						var argo2=args_arr[args_arr_i];
+//						ret+=checkLiteral(argo2);
+//						ret+=parseDataAscii(argo2,CURLOPT_POSTFIELDS);
+						console.log("Black Magic. index args_arr_i:"+args_arr_i,args_arr);
+						throw new Error("Black Magic.");						
+						++curl_cmd_arr_i;//black magic.
+						
+						var argo2=curl_cmd_arr[curl_cmd_arr_i];//black magic.
+						if(argo2==undefined){
+							ret+="//Warning: -d and --data and --data-ascii requires additional (and missing!!!) parameters! example: -d foo=bar";
+							continue;
+							}
+						//black magic.
+						ret+=parseDataAscii(argo2,CURLOPT_POSTFIELDS);//black magic.
+						continue;
+					}
+					
+					if(arg=="-H" || arg=="--header"){
+						if(false==NextArgumentIsRequired()){
+							continue;//
+						}
+						++args_arr_i;
+						var argo2=args_arr[args_arr_i];
+						ret+=checkLiteral(argo2);
+						ret+=parseHeader(argo2['value'],headers);
+						continue;
+					}
+					//END OF THE LINE: Should be unreachable with valid input, means an unsupported argument!
+					ret+=parseUnsupported(arg);
+				}
+				if(!supressComma){
+					ret+=","+debugCommaFun();
+				}
+				if(!supressNewline){
+					ret+="\n";
+				}
+			(function add_CURLOPT_HTTPHEADERs(){
+				"use strict";
+				if(headers.length<1){
+					return;
+				}
+				var i=0;
+				ret+="CURLOPT_HTTPHEADER=>array(\n";
+				for(;i<headers.length;++i){
+					ret+="    "+quote_php(headers[i])+",\n";
+				}
+				ret=ret.substr(0,ret.length-2)+"\n";//...
+				ret+="    )\n";
+			})();			
+			
+			
+			(function add_CURLOPT_POSTFIELDS(){
+				"use strict";
+				return;//TODO..
+				if(headers.length<1){
+					return;
+				}
+				var i=0;
+				ret+="CURLOPT_HTTPHEADER=>array(\n";
+				for(;i<headers.length;++i){
+					ret+="    "+quote_php(headers[i])+",\n";
+				}
+				ret=ret.substr(0,ret.length-2)+"\n";//...
+				ret+="    )\n";
+			})();
+
+				ret+=");\n\n";
+			};
+			
+			
+			
+		return ret;
+			};
+	
+	function curlcmd_to_curlphp(curlcmd){
+		//curl 'https://www.slavehack.com/workimage.php?rand=35' -H 'Accept: image/png,image/*;q=0.8,*/*;q=0.5' -H 'Accept-Encoding: gzip, deflate' -H 'Accept-Language: en-US,en;q=0.5' -H 'Connection: keep-alive' -H 'Cookie: __cfduid=dcff43c4adff4e5e0f5e9c4d6a2df39011425562874; _ga=GA1.2.222395776.1425562864; PHPSESSID=j58ha3f4dhugv7auofre6tmp14; _gat=1' -H 'Host: www.slavehack.com' -H 'Referer: https://www.slavehack.com/index2.php' -H 'User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64; rv:36.0) Gecko/20100101 Firefox/36.0'
+		var parsed_expressions=parse_parameters(curlcmd);
+		var i=0;
+		var debugComma=false;//true print the line that created commas.
+		var debugCommaFun=function ln() {
+			if(!debugComma){
+				return "";
+			}
+			var e = new Error();
+			if (!e.stack) try {
+				// IE requires the Error to actually be throw or else the Error's 'stack'
+				// property is undefined.
+				throw e;
+				} catch (e) {
+				if (!e.stack) {
+					return 0; // IE < 10, likely
+				}
+			}
+			var stack = e.stack.toString().split(/\r\n|\n/);
+			// We want our caller's frame. It's index into |stack| depends on the
+			// browser and browser version, so we need to search for the second frame:
+			var frameRE = /:(\d+):(?:\d+)[^\d]*$/;
+			do {
+				var frame = stack.shift();
+			} while (!frameRE.exec(frame) && stack.length);
+			return frameRE.exec(stack.shift())[1];
+		};
+		
+		var ret="";
+		var isHeader=false;
+		var suppresscomma=false;
+		var suppressspace=false;
+		for(;parsed_expressions.hasOwnProperty(i);++i){
+			var parsed_expression=parsed_expressions[i];
+			console.log("parsed_expression:",parsed_expression,parsed_expression["command"]);
+			if(parsed_expression["command"]== null || parsed_expression["command"]["value"]==null){
+				continue;
+			}
+			if(parsed_expression["command"]["value"].toString().toLowerCase()!="curl"){
+				ret+="//Warning: unknown command >>>"+quote_php(parsed_expression["command"]["value"])+"<<< ...Attempting to skip! (but this should be fixed)\n\n";continue;
+			}
+			ret +="array(";
+			var argsi=0;
+			isHeader=false;
+			suppresscomma=false;
+			suppressspace=false;
+			var headers=[];//should we allow duplicate headers?
+			for(;argsi<parsed_expression["args"].length;++argsi){
+				
+				var argo=parsed_expression["args"][argsi];
+				if(argo["type"]!="literal"){
+					ret+="//Warning: only literal argument type supported. detected argument type:"+quote_php(argo["type"])+" ...will pretend its a string literal and continue (this could get ugly..)\n\n";
+				}
+				var arg=argo["value"];
+				var argl=arg.toString().toLowerCase();
+				if(arg=="-H"){
+					if(isHeader){
+						ret+="//Warning: detected -H -H (this could be my fault, and that im detecting wrong, but it's probably your fault. you should fix this, if you can. its unsupported. maybe it will fuck shit up.)";
+					}
+					isHeader=true;
+					continue;
+					} else {
+					isHeader=false;
+					//???
+				}
+				if(argsi!=0){
+					if(!suppresscomma){
+						ret+=","+debugCommaFun();
+					}
+					suppresscomma=false;
+				}
+				if(!suppressspace){
+					ret+="\n";
+				}
+				suppressspace=false;
+				if(argsi==0){
+					if(false===/http/i.test(arg)){
+						ret+="//Warning: expected first parameter to be a string containing http...\n";
+					}
+					ret+="CURLOPT_URL=>"+quote_php(arg);
+					continue;
+				}
+				var accept_encoding=/^Accept-Encoding\s*\:\s*(.*)/ig.exec(arg);
+				if(accept_encoding!=null){
+					ret+="CURLOPT_ENCODING=>";
+					if(document.querySelector("#exact_accept_encoding_button").checked){
+						ret+=quote_php(accept_encoding[1]);
+						} else {
+						ret+=quote_php("");
+					}
+					continue;
+				}
+				var curlopt_reuse=/^Connection\s*\:\s*(.*)/gi.exec(arg);
+				if(curlopt_reuse!=null){
+					var tmp="CURLOPT_FORBID_REUSE=>";
+					if(curlopt_reuse[1]=="keep-alive"){
+						tmp+=quote_php(false);
+						} else if(curlopt_reuse[1]=="close"){
+						tmp+=quote_php(true);
+						} else {
+						ret+="//Warning: unknown Connection: parameter: "+quote_php(curlopt_reuse[1])+ " ...ignoring.";
+						suppresscomma=true;
+						suppressspace=true;
+						continue;
+					}
+					ret+=tmp;
+					continue;
+				}
+				var curlopt_useragent=/User-Agent\s*\:\s*(.*)/gi.exec(arg);
+				if(curlopt_useragent!=null){
+					ret+="CURLOPT_USERAGENT=>"+quote_php(curlopt_useragent[1]);
+					continue;
+				}
+				var curlopt_cookie=/^Cookie\s*\:\s*(.*)/gi.exec(arg);
+				if(curlopt_cookie!=null)
+				{
+					if(document.querySelector("#ignore_cookies_button").checked){
+						//cookies ignored.
+						suppresscomma=true;
+						suppressspace=true;
+						continue;
+					}
+					ret+="CURLOPT_COOKIE=>"+quote_php(curlopt_cookie[1]);
+					continue;
+				}
+				headers.push(arg);
+				suppresscomma=true;
+				suppressspace=true;
+				//	ret+="TODO: "+quote_php(arg);
 				}
 				if(!suppresscomma){
 					ret+=","+debugCommaFun();;
@@ -167,9 +581,10 @@
 			return ret;
 		}
 		function curlphp_refresh(){
-			document.querySelector("#curlphp_text").textContent=curlcmd_to_curlphp(document.querySelector("#curlcmd_text").value.replace(/\t/gi,"\n"));
+			document.querySelector("#curlphp_text").textContent=curlcmd_to_curlphp_v2(document.querySelector("#curlcmd_text").value.replace(/\t/gi,"\n"));
 			//for whatever reason, at least chrome is inserting tabs to the textarea to indicate "newline created automatically because the edge is reached"...
 		}
+		
 	</script>
 </head>
 <body>
@@ -190,7 +605,7 @@
 	document.querySelector("#ignore_cookies_button").addEventListener("change",curlphp_refresh);
 	document.querySelector("#exact_accept_encoding_button").addEventListener("change",function(ev)
 	{
-	    if(this.checked!=false){
+		if(this.checked!=false){
 			this.checked=confirm('Are you sure you want this? If you force cURL to lie, and say it support an encoding it does not support (for instance, Chrome support \'sdch\', curl does not), and the server decide to use 1 of those encodings that curl does not support, you\'ll get problems. Only press yes if you know what you are doing.  The default is to let curl handle transfer encodings automatically, if encdoings are specified.');
 		}
 		curlphp_refresh();//todo: optimize so we only call curlphp_refresh() if the user decide to change this setting?
